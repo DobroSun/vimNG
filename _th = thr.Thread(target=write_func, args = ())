@@ -1,7 +1,7 @@
 
 function! Start()
    new tmp
-
+    
     let g:is_input = 1
     let s:str = ''
     while g:is_input
@@ -9,7 +9,7 @@ function! Start()
         let s:char = getchar()
         "let s:s = nr2char(s:char)
         "let s:s = s:char
-        let g:is_input = Set_Bindings()
+        let g:is_input = Set_Bindings(s:str, s:char)
 
         let s:p_c = (!type(s:char))? nr2char(s:char): s:char
         let s:str = s:str . s:p_c
@@ -17,19 +17,16 @@ function! Start()
     endwhile
 endfunction
 
-function! Set_Bindings()
-    "echo type(s:char)
+function! Set_Bindings(str, char)
     echo nr2char(s:char)
-
     if s:char == "\<BS>"
         if strlen(s:str) == 1
             let s:str = ''
         endif
         let s:str = s:str[:-2]
         let s:char = ''
-    elseif nr2char(s:char) == "\<CR>"
+    elseif s:char == "<CR>"
         let g:is_input = 0
-        let s:char = ''
     endif
     return g:is_input
 endfunction
@@ -53,7 +50,6 @@ if !g:is_running
 endif
 let g:is_runnging = 0
 
-let py_exe = 'python3'
 execute py_exe "<< EOF"
 import datetime
 import functools
@@ -77,7 +73,7 @@ def write_func():
     vim.command("call Write()")
 
 def main():
-
+    
     read_func()
     write_th = thr.Thread(target=write_func, args = ())
     #read_th = thr.Thread(target=read_func, args = ())
@@ -85,6 +81,7 @@ def main():
 main()
 EOF
 endfunction
+
 
 let g:is_running = 1
 nnoremap <C-k> :call vim_scan#start_python()<CR>
