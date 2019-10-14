@@ -1,26 +1,21 @@
-
-function! Start()
-   new tmp
+let s:ok = 0
+function! s:start()
+    new tmp
 
     let g:is_input = 1
     let s:str = ''
     while g:is_input
         redraw
         let s:char = getchar()
-        "let s:s = nr2char(s:char)
-        "let s:s = s:char
-        let g:is_input = Set_Bindings()
+        call s:set_bindings()
 
         let s:p_c = (!type(s:char))? nr2char(s:char): s:char
-        let s:str = s:str . s:p_c
+        let s:str .= s:p_c
         call setline('.', s:str)
     endwhile
 endfunction
 
-function! Set_Bindings()
-    "echo type(s:char)
-    echo nr2char(s:char)
-
+function! s:set_bindings()
     if s:char == "\<BS>"
         if strlen(s:str) == 1
             let s:str = ''
@@ -28,22 +23,21 @@ function! Set_Bindings()
         let s:str = s:str[:-2]
         let s:char = ''
     elseif nr2char(s:char) == "\<CR>"
+        let g:ok = 1
         let g:is_input = 0
         let s:char = ''
     endif
-    return g:is_input
 endfunction
 
-function! Write()
+function! s:write()
     while 1
-        let s:res = getline('0')
-        "call system("grep -R" . s:res)
-        call append('$', 'Hello world')
+        sleep(2)
+        echo "Doing nothing"
     endwhile
 endfunction
 
-function! Close()
-    echo "Closing"
+function! s:close()
+    "echo "Closing"
 endfunction
 
 function! vim_scan#start_python()
@@ -71,15 +65,16 @@ import traceback
 import vim
 
 def read_func():
-    vim.command("call Start()")
+    vim.command("call s:start()")
 
 def write_func():
-    vim.command("call Write()")
+    vim.command("call s:write()")
 
 def main():
-
-    read_func()
     write_th = thr.Thread(target=write_func, args = ())
+    write_th.start()
+    write_th.join()
+    read_func()
     #read_th = thr.Thread(target=read_func, args = ())
 
 main()
@@ -88,3 +83,4 @@ endfunction
 
 let g:is_running = 1
 nnoremap <C-k> :call vim_scan#start_python()<CR>
+"nnoremap <C-c> :call s:close()<CR>
