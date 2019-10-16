@@ -1,7 +1,5 @@
-let s:ok = 0
 function! s:start()
-    new tmp
-
+    new tmp 
     let g:is_input = 1
     let s:str = ''
     while g:is_input
@@ -23,27 +21,21 @@ function! s:set_bindings()
         let s:str = s:str[:-2]
         let s:char = ''
     elseif nr2char(s:char) == "\<CR>"
-        let g:ok = 1
         let g:is_input = 0
         let s:char = ''
     endif
 endfunction
 
 function! s:write()
-    while 1
-        sleep(2)
-        echo "Doing nothing"
-    endwhile
 endfunction
 
 function! s:close()
-    "echo "Closing"
 endfunction
 
 function! vim_scan#start_python()
 if !g:is_running
     let g:is_runnging = 1
-    call Close()
+    call s:close()
 endif
 let g:is_runnging = 0
 
@@ -68,13 +60,21 @@ def read_func():
     vim.command("call s:start()")
 
 def write_func():
-    vim.command("call s:write()")
+    #vim.command("call s:write()")
+    vim.command("echo 'Hello world'")
+
+" Переделывать все через питоновский класс,
+" Главный поток будет брать Символы у user и отправлять в очередь,
+" Дочерний поток должен брать из очереди данные grep их затем отправляя главному потоку из
+" другой очереди.
+" Только главный поток будет рисовать на окне в текущем буфере.
+" Дочерние потоки будут парсить каталоги на наличие введенного объекта.
 
 def main():
     write_th = thr.Thread(target=write_func, args = ())
     write_th.start()
-    write_th.join()
     read_func()
+    #write_th.join()
     #read_th = thr.Thread(target=read_func, args = ())
 
 main()
