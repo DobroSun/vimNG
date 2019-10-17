@@ -1,7 +1,5 @@
 function! s:start()
     new tmp 
-    let g:is_input = 1
-    let s:str = ''
     while g:is_input
         redraw
         let s:char = getchar()
@@ -56,31 +54,68 @@ import time
 import traceback
 import vim
 
-def read_func():
-    vim.command("call s:start()")
+# Переделывать все через питоновский класс,
+# Главный поток будет брать Символы у user и отправлять в очередь,
+# Дочерний поток должен брать из очереди данные grep их затем отправляя главному потоку из
+# другой очереди.
+# Только главный поток будет рисовать на окне в текущем буфере.
+# Дочерние потоки будут парсить каталоги на наличие введенного объекта.
 
-def write_func():
-    #vim.command("call s:write()")
-    vim.command("echo 'Hello world'")
+class Buffer():
+    def __init__(self, lock, buf_q, send_q):
+        self.buf_q = buf_q
+        self.send_q = send_q
+        self.lock = lock
 
-" Переделывать все через питоновский класс,
-" Главный поток будет брать Символы у user и отправлять в очередь,
-" Дочерний поток должен брать из очереди данные grep их затем отправляя главному потоку из
-" другой очереди.
-" Только главный поток будет рисовать на окне в текущем буфере.
-" Дочерние потоки будут парсить каталоги на наличие введенного объекта.
+    def write(self, msg=0, line=1):
+        curbuf = vim.current.buffer
+        #sys.stdout.write(msg)
+
+        if not line:
+            curbuf[0] = msg
+            #curbuf.append("Search: ", 0)
+
+    def redraw(self):
+        with self.lock:
+            vim.command("redraw")
+
+    def set_bindings(self, char):
+        pass
 
 def main():
-    write_th = thr.Thread(target=write_func, args = ())
-    write_th.start()
-    read_func()
-    #write_th.join()
-    #read_th = thr.Thread(target=read_func, args = ())
 
+    # Global variables
+
+    is_running = vim.eval("g:is_running")
+    string = vim.eval("s:str")
+    buf_q, send_q = queue.Queue(), queue.Queue()
+    lock = thr.Lock()
+    buf = Buffer(lock, buf_q, send_q)
+
+    # Thread that starts parsing threads
+
+
+
+    # Actual window
+    vim.command("new tmp")
+
+    while is_running:
+        buf.redraw()
+        if not buf.buf_q.empty():
+            msg = buf.buf_q.get()
+            buf.write(msg, 0)
+
+        vim.command("let s:char = getchar()")
+        # Doesn't handle backspace
+        input = vim.eval("nr2char(s:char)")
+
+        string += input
+        buf.send_q.put(string)
+        buf.write(string, 0)
 main()
 EOF
 endfunction
 
 let g:is_running = 1
+let s:str = ''
 nnoremap <C-k> :call vim_scan#start_python()<CR>
-"nnoremap <C-c> :call s:close()<CR>
