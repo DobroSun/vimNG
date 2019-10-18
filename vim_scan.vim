@@ -93,6 +93,9 @@ def main():
     buf = Buffer(lock, buf_q, send_q)
 
     # Thread that starts parsing threads
+    # And put in work_q files to search
+    # Than threads will get files from worq_q and
+    # fill database with parsed text
 
 
 
@@ -110,6 +113,7 @@ def main():
         input = vim.eval("nr2char(s:char)")
 
         string += input
+        # Thread that will get from queue and Select from database
         buf.send_q.put(string)
         buf.write(string, 0)
 main()
