@@ -80,6 +80,9 @@ class Buffer():
             vim.command("redraw")
 
     def set_bindings(self, char):
+        # If <CR> pressed than
+        # is_running = 0
+        # 
         pass
 
 def main():
@@ -114,8 +117,11 @@ def main():
 
         string += input
         # Thread that will get from queue and Select from database
+        # Then send result to buf_q
         buf.send_q.put(string)
         buf.write(string, 0)
+    # call new mode in buffer to navigate written text
+    # to change to new file
 main()
 EOF
 endfunction
