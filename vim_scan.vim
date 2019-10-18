@@ -67,23 +67,37 @@ class Buffer():
         self.send_q = send_q
         self.lock = lock
 
-    def write(self, msg=0, line=1):
+    def write(self, msg=0, *, header=False):
         curbuf = vim.current.buffer
-        #sys.stdout.write(msg)
 
-        if not line:
+        if header:
             curbuf[0] = msg
-            #curbuf.append("Search: ", 0)
+        else:
+            curbuf.append(msg)
 
     def redraw(self):
         with self.lock:
             vim.command("redraw")
 
     def set_bindings(self, char):
-        # If <CR> pressed than
-        # is_running = 0
-        # 
-        pass
+        if char == "13":
+            return 0, ''
+        vim.command("let s:char = %s" % char)
+        return 1, vim.eval("nr2char(s:char)")
+
+class ReaderThread(thr.Thread):
+    def __init__(self, lock, buf_q, send_q):
+        super().__init__()
+        self.lock = lock
+        self.buf_q = buf_q
+        self.send_q = send_q
+
+    def run(self):
+        while 1:
+            if not self.send_q.empty():
+                with self.lock:
+                    item = self.send_q.get()
+                    self.buf_q.put(item)
 
 def main():
 
@@ -100,7 +114,8 @@ def main():
     # Than threads will get files from worq_q and
     # fill database with parsed text
 
-
+    th1 = ReaderThread(lock, buf_q, send_q)
+    th1.start()
 
     # Actual window
     vim.command("new tmp")
@@ -109,17 +124,18 @@ def main():
         buf.redraw()
         if not buf.buf_q.empty():
             msg = buf.buf_q.get()
-            buf.write(msg, 0)
+            buf.write(msg)
 
         vim.command("let s:char = getchar()")
         # Doesn't handle backspace
-        input = vim.eval("nr2char(s:char)")
+        input = vim.eval("s:char")
+        is_running, input = buf.set_bindings(input)
 
         string += input
-        # Thread that will get from queue and Select from database
-        # Then send result to buf_q
         buf.send_q.put(string)
-        buf.write(string, 0)
+        buf.write(string, header=True)
+    #th1.join()
+    os._exit()
     # call new mode in buffer to navigate written text
     # to change to new file
 main()
