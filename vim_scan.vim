@@ -11,8 +11,8 @@ function! s:start()
     endwhile
 endfunction
 
-function! s:set_bindings()
-    if s:char == "\<BS>"
+function! s:set_bindings(char)
+    if a:char == "\<BS>"
         if strlen(s:str) == 1
             let s:str = ''
         endif
@@ -20,8 +20,18 @@ function! s:set_bindings()
         let s:char = ''
     elseif nr2char(s:char) == "\<CR>"
         let g:is_input = 0
-        let s:char = ''
+        let a:char = ''
     endif
+endfunction
+
+function! s:todo(char)
+    if a:char == "\<BS>"
+        return 1
+    elseif a:char == "\<C-H>"
+        return 2
+    return 0
+    endif
+
 endfunction
 
 function! s:write()
@@ -85,26 +95,42 @@ class Buffer():
         vim.command("let s:char = %s" % char)
         return 1, vim.eval("nr2char(s:char)")
 
-class ReaderThread(thr.Thread):
-    def __init__(self, lock, buf_q, send_q):
+class HandlerThread(thr.Thread):
+    def __init__(self, buf_q, send_q):
         super().__init__()
-        self.lock = lock
         self.buf_q = buf_q
         self.send_q = send_q
+        self._running = True
 
     def run(self):
-        while 1:
+        while self._running:
             if not self.send_q.empty():
-                with self.lock:
-                    item = self.send_q.get()
-                    self.buf_q.put(item)
+                item = self.send_q.get()
+                # request to database
+                item = "Hello"
+                self.buf_q.put(item)
+
+    def terminate(self):
+        self._running = False
+
+class RefreshThread(thr.Thread):
+    def __init__(self, lock):
+        super().__init__()
+        self.lock()
+        self._running = True
+
+    def run(self):
+        pass
+
+    def terminate(self):
+        self._running = False
 
 def main():
-
     # Global variables
 
     is_running = vim.eval("g:is_running")
     string = vim.eval("s:str")
+    string = ''
     buf_q, send_q = queue.Queue(), queue.Queue()
     lock = thr.Lock()
     buf = Buffer(lock, buf_q, send_q)
@@ -114,11 +140,12 @@ def main():
     # Than threads will get files from worq_q and
     # fill database with parsed text
 
-    th1 = ReaderThread(lock, buf_q, send_q)
-    th1.start()
-
     # Actual window
     vim.command("new tmp")
+
+    #handler = HandlerThread(buf_q, send_q)
+    #handler.start()
+
 
     while is_running:
         buf.redraw()
@@ -126,16 +153,17 @@ def main():
             msg = buf.buf_q.get()
             buf.write(msg)
 
-        vim.command("let s:char = getchar()")
-        # Doesn't handle backspace
-        input = vim.eval("s:char")
-        is_running, input = buf.set_bindings(input)
+        # <C-c> gonna ruin all
+        # Не может use С-с и BS
+        vim.command("execute 'try | let s:char = getchar() | catch | endtry'")
 
-        string += input
+        vim.command("let s:num = s:todo(s:char)")
+        todo = vim.eval("s:num")
+        print(todo)
+        #string += input
         buf.send_q.put(string)
         buf.write(string, header=True)
-    #th1.join()
-    os._exit()
+    #handler.terminate()
     # call new mode in buffer to navigate written text
     # to change to new file
 main()
