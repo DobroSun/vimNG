@@ -24,14 +24,20 @@ function! s:set_bindings(char)
     endif
 endfunction
 
-function! s:todo(char)
+function! s:todo(char, string)
+    let s:string = a:string
+    let s:char = a:char
     if a:char == "\<BS>"
-        return 1
-    elseif a:char == "\<C-H>"
-        return 2
-    return 0
+        let s:string = (strlen(s:string) > 1)? s:string[:-2]: ''
+        let s:char = ''
+    elseif nr2char(a:char) == "\<CR>"
+        let s:is_running = 0
+        echo "HEllo world"
+        let s:char = ''
     endif
+    let s:string .= nr2char(s:char)
 
+    return s:string
 endfunction
 
 function! s:write()
@@ -89,11 +95,17 @@ class Buffer():
         with self.lock:
             vim.command("redraw")
 
-    def set_bindings(self, char):
-        if char == "13":
-            return 0, ''
-        vim.command("let s:char = %s" % char)
-        return 1, vim.eval("nr2char(s:char)")
+    def handle_input(self, string, is_running):
+        vim.command("execute 'try | let s:char = getchar() | catch | endtry'")
+
+        vim.command("let s:string = '%s'" % string)
+        vim.command("let s:is_running = '%s'" % is_running)
+
+        vim.command("let s:string = s:todo(s:char, s:string)")
+        string = vim.eval("s:string")
+        is_running = vim.eval("s:is_running")
+
+        return string, is_running
 
 class HandlerThread(thr.Thread):
     def __init__(self, buf_q, send_q):
@@ -153,14 +165,8 @@ def main():
             msg = buf.buf_q.get()
             buf.write(msg)
 
-        # <C-c> gonna ruin all
-        # Не может use С-с и BS
-        vim.command("execute 'try | let s:char = getchar() | catch | endtry'")
+        string, is_running = buf.handle_input(string, is_running)
 
-        vim.command("let s:num = s:todo(s:char)")
-        todo = vim.eval("s:num")
-        print(todo)
-        #string += input
         buf.send_q.put(string)
         buf.write(string, header=True)
     #handler.terminate()
