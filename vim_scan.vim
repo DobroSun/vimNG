@@ -24,20 +24,20 @@ function! s:set_bindings(char)
     endif
 endfunction
 
-function! s:todo(char, string)
+function! s:todo(char, string, is_running)
     let s:string = a:string
     let s:char = a:char
+    let s:is_running = a:is_running
     if a:char == "\<BS>"
         let s:string = (strlen(s:string) > 1)? s:string[:-2]: ''
         let s:char = ''
     elseif nr2char(a:char) == "\<CR>"
         let s:is_running = 0
-        echo "HEllo world"
         let s:char = ''
     endif
     let s:string .= nr2char(s:char)
 
-    return s:string
+    return [s:string, s:is_running]
 endfunction
 
 function! s:write()
@@ -101,9 +101,9 @@ class Buffer():
         vim.command("let s:string = '%s'" % string)
         vim.command("let s:is_running = '%s'" % is_running)
 
-        vim.command("let s:string = s:todo(s:char, s:string)")
-        string = vim.eval("s:string")
-        is_running = vim.eval("s:is_running")
+        vim.command("let s:list = s:todo(s:char, s:string, s:is_running)")
+        string = vim.eval("get(s:list, 0)")
+        is_running = int(vim.eval("get(s:list, 1)"))
 
         return string, is_running
 
