@@ -79,9 +79,9 @@ import vim
 
 class Buffer():
     def __init__(self, lock, buf_q, send_q):
+        self.lock = lock
         self.buf_q = buf_q
         self.send_q = send_q
-        self.lock = lock
 
     def write(self, msg=0, *, header=False):
         curbuf = vim.current.buffer
@@ -108,8 +108,9 @@ class Buffer():
         return string, is_running
 
 class HandlerThread(thr.Thread):
-    def __init__(self, buf_q, send_q):
+    def __init__(self, lock, buf_q, send_q):
         super().__init__()
+        self.lock = lock
         self.buf_q = buf_q
         self.send_q = send_q
         self._running = True
@@ -118,10 +119,52 @@ class HandlerThread(thr.Thread):
         while self._running:
             if not self.send_q.empty():
                 item = self.send_q.get()
-                # request to database
+                # with self.lock:
+                    # request to database
                 item = "Hello"
                 self.buf_q.put(item)
 
+    def terminate(self):
+        self._running = False
+
+class CallerThread(thr.Thread):
+    def __init__(self, work_q, lock, tmp_db):
+        super().__init__()
+        self.work_q = work_q
+        self.lock = lock
+        self.tmp_db = tmp_db
+
+    def run(self):
+        filenames = subprocess.Popen(["find * -type f"], shell=True, stdout=subprocess.PIPE).communicate()[0].decode().split("\n")
+        
+        for file in filenames:
+            self.work_q.put(file)
+
+        running_workers = []
+        nthreads = len(output) if len(output) < 17 else 16
+        for i in range(nthreads):
+            th = WorkerThread(self.lock, self.work_q, tmp_db)
+            th.start()
+
+class WorkerThread(thr.Thread):
+    def __init__(self, lock, work_q, tmp_db):
+        super().__init__()
+        self.lock = lock
+        self.work_q = work_q
+        self.tmp_db = tmp_db
+        self._running = True
+
+    def run(self):
+        while self._running:
+            try:
+                task = self.work_q.get()
+                
+                # parse file and push to with self.lock: database
+
+                worq_q.task_done()
+            except queue.Empty():
+                self.terminate()
+    
     def terminate(self):
         self._running = False
 
@@ -132,7 +175,9 @@ class RefreshThread(thr.Thread):
         self._running = True
 
     def run(self):
-        pass
+        while self._running:
+            with self.lock:
+                vim.command("redraw")
 
     def terminate(self):
         self._running = False
@@ -141,35 +186,41 @@ def main():
     # Global variables
 
     is_running = vim.eval("g:is_running")
-    string = vim.eval("s:str")
+
     string = ''
     buf_q, send_q = queue.Queue(), queue.Queue()
-    lock = thr.Lock()
-    buf = Buffer(lock, buf_q, send_q)
+    buf_lock, db_lock = thr.Lock(), thr.Lock()
+    buf = Buffer(buf_lock, buf_q, send_q)
 
-    # Thread that starts parsing threads
-    # And put in work_q files to search
-    # Than threads will get files from worq_q and
-    # fill database with parsed text
+    #tmp_db = tempfile.NamedTemporaryFile(suffix=".db")
+
+
+    # Call workerThreads to 
+    #caller = CallerThread(work_q, db_lock, tmp_db)
+    #caller.start()
+
 
     # Actual window
     vim.command("new tmp")
 
-    #handler = HandlerThread(buf_q, send_q)
-    #handler.start()
+    # Call to database and put to buf_q
+    handler = HandlerThread(db_lock, buf_q, send_q)
+    handler.start()
 
 
     while is_running:
         buf.redraw()
         if not buf.buf_q.empty():
+            # Writes from buf_q
             msg = buf.buf_q.get()
             buf.write(msg)
 
         string, is_running = buf.handle_input(string, is_running)
 
+        # Send on handling
         buf.send_q.put(string)
         buf.write(string, header=True)
-    #handler.terminate()
+    handler.terminate()
     # call new mode in buffer to navigate written text
     # to change to new file
 main()
