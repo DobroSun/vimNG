@@ -1,28 +1,3 @@
-function! s:start()
-    new tmp 
-    while g:is_input
-        redraw
-        let s:char = getchar()
-        call s:set_bindings()
-
-        let s:p_c = (!type(s:char))? nr2char(s:char): s:char
-        let s:str .= s:p_c
-        call setline('.', s:str)
-    endwhile
-endfunction
-
-function! s:set_bindings(char)
-    if a:char == "\<BS>"
-        if strlen(s:str) == 1
-            let s:str = ''
-        endif
-        let s:str = s:str[:-2]
-        let s:char = ''
-    elseif nr2char(s:char) == "\<CR>"
-        let g:is_input = 0
-        let a:char = ''
-    endif
-endfunction
 
 function! s:todo(char, string, is_running)
     let s:string = a:string
@@ -107,12 +82,13 @@ class Buffer():
 
         return string, is_running
 
-class HandlerThread(thr.Thread):
-    def __init__(self, lock, buf_q, send_q):
+class QueryThread(thr.Thread):
+    def __init__(self, lock, buf_q, send_q, tmp_db):
         super().__init__()
         self.lock = lock
         self.buf_q = buf_q
         self.send_q = send_q
+        self.tmp_db = tmp_db
         self._running = True
 
     def run(self):
@@ -141,7 +117,7 @@ class CallerThread(thr.Thread):
             self.work_q.put(file)
 
         running_workers = []
-        nthreads = len(output) if len(output) < 17 else 16
+        nthreads = len(filenames) if len(filenames) < 17 else 16
         for i in range(nthreads):
             th = WorkerThread(self.lock, self.work_q, tmp_db)
             th.start()
@@ -171,7 +147,7 @@ class WorkerThread(thr.Thread):
 class RefreshThread(thr.Thread):
     def __init__(self, lock):
         super().__init__()
-        self.lock()
+        self.lock = lock
         self._running = True
 
     def run(self):
@@ -188,24 +164,33 @@ def main():
     is_running = vim.eval("g:is_running")
 
     string = ''
-    buf_q, send_q = queue.Queue(), queue.Queue()
+    buf_q, send_q, work_q = queue.Queue(), queue.Queue(), queue.Queue()
     buf_lock, db_lock = thr.Lock(), thr.Lock()
     buf = Buffer(buf_lock, buf_q, send_q)
 
-    #tmp_db = tempfile.NamedTemporaryFile(suffix=".db")
+    tmp_db = tempfile.NamedTemporaryFile(suffix=".db")
 
 
-    # Call workerThreads to 
-    #caller = CallerThread(work_q, db_lock, tmp_db)
-    #caller.start()
+    # Call workerThreads
+    caller = CallerThread(work_q, db_lock, tmp_db)
+    caller.start()
 
 
     # Actual window
     vim.command("new tmp")
 
+
+    """
+    refreshers = []
+    for i in range(4):
+        refr = RefreshThread(buf_lock)
+        refr.start()
+        refreshers.append(refr)
+    """
+
     # Call to database and put to buf_q
-    handler = HandlerThread(db_lock, buf_q, send_q)
-    handler.start()
+    query = QueryThread(db_lock, buf_q, send_q, tmp_db)
+    query.start()
 
 
     while is_running:
@@ -220,7 +205,8 @@ def main():
         # Send on handling
         buf.send_q.put(string)
         buf.write(string, header=True)
-    handler.terminate()
+    query.terminate()
+    #tmp_db.close()
     # call new mode in buffer to navigate written text
     # to change to new file
 main()
