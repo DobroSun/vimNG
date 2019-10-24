@@ -41,6 +41,7 @@ import signal
 import subprocess
 import tempfile
 import threading as thr
+import multiprocessing as mpr
 import time
 import traceback
 import vim
@@ -82,7 +83,7 @@ class Buffer():
 
         return string, is_running
 
-class QueryThread(thr.Thread):
+class HandlerThread(mpr.Process):
     def __init__(self, lock, buf_q, send_q, tmp_db):
         super().__init__()
         self.lock = lock
@@ -97,13 +98,13 @@ class QueryThread(thr.Thread):
                 item = self.send_q.get()
                 # with self.lock:
                     # request to database
-                item = "Hello"
+
                 self.buf_q.put(item)
 
     def terminate(self):
         self._running = False
 
-class CallerThread(thr.Thread):
+class CallerThread(mpr.Process):
     def __init__(self, work_q, lock, tmp_db):
         super().__init__()
         self.work_q = work_q
@@ -111,7 +112,12 @@ class CallerThread(thr.Thread):
         self.tmp_db = tmp_db
 
     def run(self):
-        filenames = subprocess.Popen(["find * -type f"], shell=True, stdout=subprocess.PIPE).communicate()[0].decode().split("\n")
+        proc = subprocess.Popen(["find * -type f"], shell=True, stdout=subprocess.PIPE)
+        filenames = proc.communicate()[0].decode().split("\n")
+        
+
+        th = thr.Thread(target=lambda proc: proc.wait(), args=(proc,))
+        th.start()
         
         for file in filenames:
             self.work_q.put(file)
@@ -189,8 +195,8 @@ def main():
     """
 
     # Call to database and put to buf_q
-    query = QueryThread(db_lock, buf_q, send_q, tmp_db)
-    query.start()
+    handler = HandlerThread(db_lock, buf_q, send_q, tmp_db)
+    handler.start()
 
 
     while is_running:
@@ -205,8 +211,8 @@ def main():
         # Send on handling
         buf.send_q.put(string)
         buf.write(string, header=True)
-    query.terminate()
-    #tmp_db.close()
+    handler.terminate()
+    tmp_db.close()
     # call new mode in buffer to navigate written text
     # to change to new file
 main()
