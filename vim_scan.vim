@@ -143,8 +143,8 @@ class WorkerThread(thr.Thread):
                 
                 # parse file and push to with self.lock: database
 
-                worq_q.task_done()
-            except queue.Empty():
+                self.work_q.task_done()
+            except queue.Empty:
                 self.terminate()
     
     def terminate(self):
