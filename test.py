@@ -9,11 +9,41 @@ import tempfile
 import threading as thr
 import multiprocessing as mp
 
+class HandlerThread(thr.Thread):
+    def __init__(self, buf_q, send_q):
+        super().__init__()
+        self.buf_q = buf_q
+        self.send_q = send_q
+        self._running = True
+
+    def run(self):
+        while self._running:
+            # Will wait for any object in queue
+            name = self.send_q.get()
+
+
+            msg = self.get_from_db(name)
+            buf_q.put(msg)
+
+    def get_from_db(self, name):
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+
+        sql = f"""SELECT * FROM defs WHERE row LIKE '%{name}%'"""
+        for row in cursor.execute(sql):
+            print(row)
+        self.terminate()
+
+
+    def terminate(self):
+        self._running = False
+
 class CallerThread(thr.Thread):
     def __init__(self, work_q, lock):
         super().__init__()
         self.work_q = work_q
         self.lock = lock
+        self.threads = []
 
 
     def run(self):
@@ -31,13 +61,14 @@ class CallerThread(thr.Thread):
 
         running_workers = []
         nthreads = len(filenames) if len(filenames) < 17 else 16
-        nthreads = 1
+        #nthreads = 1
         for i in range(nthreads):
             th = WorkerThread(self.lock, self.work_q)
             th.start()
+            self.threads.append(th)
 
 class WorkerThread(thr.Thread):
-    PY_RE = [r".* = .*", r"def \w*(.*):", r"class \w*(.*):"]
+    PY_RE = [r"\w* = .*", r"def \w*(.*):", r"class \w*(.*):"]
 
     def __init__(self, lock, work_q):
         super().__init__()
@@ -45,7 +76,8 @@ class WorkerThread(thr.Thread):
         self.work_q = work_q
         self._running = True
         self.connected = False
-        self.conn = self.cursor = None
+        self.conn = None
+        self.cursor = None
 
     def parse_file(self, filename):
         with open(filename, "r") as f:
@@ -53,10 +85,10 @@ class WorkerThread(thr.Thread):
                 for pattern in self.PY_RE:
                     compiled_p = re.compile(pattern)
                     res = re.search(compiled_p, line)
-                    if not res:
+                    if not res or res.start() not in [0, 4]:
                         continue
-                    #print(i, res.group(0), sep="    ")
-                    self.push_to_db((filename, i, res.group(0)))
+                    #print(i+1, res.group(0), sep="    ")
+                    self.push_to_db((filename, i+1, res.group(0)))
 
     def push_to_db(self, values):
         def _create_conn():
@@ -67,7 +99,7 @@ class WorkerThread(thr.Thread):
             _create_conn()
             self.connected = True
         sql = """INSERT INTO defs VALUES (?, ?, ?)"""
-        #print(*values, sep="  ")
+
         self.cursor.executemany(sql, [values])
         with self.lock:
             self.conn.commit()
@@ -77,19 +109,14 @@ class WorkerThread(thr.Thread):
             try:
                 task = self.work_q.get_nowait()
                 
-                #print("Semo")
                 self.parse_file(task)
-                # parse file and push to with self.lock: database
-
-                #self.work_q.task_done()
+                self.work_q.task_done()
             except queue.Empty:
                 print("Terminating")
                 self.terminate()
     
     def terminate(self):
         self._running = False
-
-DB_NAME = "w.db"
 
 def print_db():
     conn = sqlite3.connect(DB_NAME)
@@ -102,35 +129,34 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    def del_all_in_db(conn, cursor):
+    def del_table(conn, cursor):
         try:
             sql = """DROP TABLE defs"""
             cursor.execute(sql)
         except:
             pass
-
-    del_all_in_db(conn, cursor)
-
-    sql = """CREATE TABLE defs
-                (filename text, line int, row text)"""
+    del_table(conn, cursor)
+    sql = """CREATE TABLE defs (filename text, line int, row text)"""
     try:
         cursor.execute(sql)
     except:
         pass
 
+DB_NAME = "w.db"
 
 def main():
-    #tmp_db = tempfile.NamedTemporaryFile(suffix=".db")
-    #f = open("w.db")
-    lock = mp.Lock()
-    work_q = mp.Queue()
+    db_lock = thr.Lock()
+    work_q, buf_q, send_q = queue.Queue(), queue.Queue(), queue.Queue()
 
-    conn = sqlite3.connect(DB_NAME)
+    h = HandlerThread(buf_q, send_q)
+    h.daemon = True
+    h.start()
 
-    caller = CallerThread(work_q, lock)
+    caller = CallerThread(work_q, db_lock)
     caller.start()
 
-    #tmp_db.close()
+    caller.join()
+
 
 if __name__ == "__main__":
     init_db()
@@ -143,4 +169,3 @@ if __name__ == "__main__":
 
     prc.join()
     print_db()
-    print("END")
