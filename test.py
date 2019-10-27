@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import queue
+import os
 import re
 import sqlite3
 import sys
@@ -29,10 +30,9 @@ class HandlerThread(thr.Thread):
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
 
-        sql = f"""SELECT * FROM defs WHERE row LIKE '%{name}%'"""
-        for row in cursor.execute(sql):
+        for row in cursor.execute(f"""SELECT * FROM defs WHERE row LIKE '%{name}%'"""):
             print(row)
-        self.terminate()
+        #self.terminate()
 
 
     def terminate(self):
@@ -50,6 +50,7 @@ class CallerThread(thr.Thread):
         proc = subprocess.Popen(["find * -type f"], shell=True, stdout=subprocess.PIPE)
         filenames = proc.communicate()[0].decode().split("\n")
         
+        self.exclude_ignored_files(filenames)
         print("Before waiting", filenames, sep=": ")
 
         th = thr.Thread(target=lambda proc: proc.wait(), args=(proc,))
@@ -61,11 +62,25 @@ class CallerThread(thr.Thread):
 
         running_workers = []
         nthreads = len(filenames) if len(filenames) < 17 else 16
-        #nthreads = 1
         for i in range(nthreads):
             th = WorkerThread(self.lock, self.work_q)
             th.start()
-            self.threads.append(th)
+
+    def exclude_ignored_files(self, filenames):
+        ignored = ".gitignore"
+        if not os.path.isfile(ignored):
+            return
+
+        with open(ignored) as f:
+            for pattern in f.read().split("\n"):
+                if pattern == '':
+                    continue
+                for file in filenames:
+                    if re.search(pattern, file):
+                        try:
+                            filenames.remove(file)
+                        except:
+                            pass
 
 class WorkerThread(thr.Thread):
     PY_RE = [r"\w* = .*", r"def \w*(.*):", r"class \w*(.*):"]
@@ -87,7 +102,7 @@ class WorkerThread(thr.Thread):
                     res = re.search(compiled_p, line)
                     if not res or res.start() not in [0, 4]:
                         continue
-                    #print(i+1, res.group(0), sep="    ")
+
                     self.push_to_db((filename, i+1, res.group(0)))
 
     def push_to_db(self, values):
@@ -98,9 +113,9 @@ class WorkerThread(thr.Thread):
         if not self.connected:
             _create_conn()
             self.connected = True
-        sql = """INSERT INTO defs VALUES (?, ?, ?)"""
 
-        self.cursor.executemany(sql, [values])
+
+        self.cursor.executemany("""INSERT INTO defs VALUES (?, ?, ?)""", [values])
         with self.lock:
             self.conn.commit()
 
@@ -121,26 +136,19 @@ class WorkerThread(thr.Thread):
 def print_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    sql = """SELECT * FROM defs"""
-    for row in cursor.execute(sql):
+
+    for row in cursor.execute("""SELECT * FROM defs"""):
         print(row)
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    def del_table(conn, cursor):
-        try:
-            sql = """DROP TABLE defs"""
-            cursor.execute(sql)
-        except:
-            pass
-    del_table(conn, cursor)
-    sql = """CREATE TABLE defs (filename text, line int, row text)"""
-    try:
-        cursor.execute(sql)
-    except:
-        pass
+    cursor.execute("""DELETE FROM defs""")
+    cursor.execute("""CREATE TABLE IF NOT EXISTS defs (filename text, line int, row text)""")
+
+    conn.commit()
+    conn.close()
 
 DB_NAME = "w.db"
 
@@ -164,7 +172,7 @@ if __name__ == "__main__":
     prc.start()
 
     a = 1
-    for i in range(10):
+    for i in range(20):
         a += a * a
 
     prc.join()
