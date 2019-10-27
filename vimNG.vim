@@ -1,38 +1,71 @@
+function! vimNG#begin()
+    call vimNG#init_globals()
 
-function! s:todo(char, string, is_running)
-    let s:string = a:string
-    let s:char = a:char
-    let s:is_running = a:is_running
+    " Initialize all parsers
+    call vimNG#main()
+
+    new input
+
+    let s:str = ''
+    let g:is_input = 1
+    while g:is_input
+        redraw
+        let s:char = getchar()
+        let s:str = s:handle_input(s:str, s:char)
+
+        let s:answer = s:make_request_to_db(s:str)
+
+        call s:write_to_buf(s:str, 0)
+        if !empty(s:answer)
+            call s:write_to_buf(s:answer, 1)
+        endif
+    endwhile
+
+    set nomodifiable
+    set modifiable
+endfunction
+
+function! s:handle_input(str, char)
     if a:char == "\<BS>"
-        let s:string = (strlen(s:string) > 1)? s:string[:-2]: ''
-        let s:char = ''
+        return (strlen(a:str) > 1)? a:str[:-2]: ''
     elseif nr2char(a:char) == "\<CR>"
-        let s:is_running = 0
-        let s:char = ''
+        let g:is_input = 0
+        return a:str
     endif
-    let s:string .= nr2char(s:char)
-
-    return [s:string, s:is_running]
+    return s:str . nr2char(s:char)
 endfunction
 
-function! s:write()
+function! s:write_to_buf(str, line)
+let py_exe = 'python3'
+execute py_exe "<< EOF"
+msg = vim.eval("a:str")
+line = int(vim.eval("a:line"))
+buf.write(msg, line)
+EOF
 endfunction
 
-function! s:close()
+function! s:make_request_to_db(str)
+let py_exe = 'python3'
+execute py_exe "<< EOF"
+request = vim.eval("a:str")
+send_q.put(request)
+
+answer = ["Hello", "World"]
+vim.command("let s:answer = py3eval('answer')")
+#answer = buf_q.get()
+EOF
+return s:answer
 endfunction
 
-function! vim_scan#start_python()
-if !g:is_running
-    let g:is_runnging = 1
-    call s:close()
-endif
-let g:is_runnging = 0
-
+function! vimNG#init_globals()
+let s:char = ''
 let py_exe = 'python3'
 execute py_exe "<< EOF"
 import datetime
+import sqlite3
 import functools
 import os
+import sys
 import queue
 import random
 import re
@@ -41,17 +74,9 @@ import signal
 import subprocess
 import tempfile
 import threading as thr
-import multiprocessing as mpr
 import time
 import traceback
 import vim
-
-# Переделывать все через питоновский класс,
-# Главный поток будет брать Символы у user и отправлять в очередь,
-# Дочерний поток должен брать из очереди данные grep их затем отправляя главному потоку из
-# другой очереди.
-# Только главный поток будет рисовать на окне в текущем буфере.
-# Дочерние потоки будут парсить каталоги на наличие введенного объекта.
 
 class Buffer():
     def __init__(self, lock, buf_q, send_q):
@@ -59,13 +84,17 @@ class Buffer():
         self.buf_q = buf_q
         self.send_q = send_q
 
-    def write(self, msg=0, *, header=False):
+    def write(self, msg, line):
         curbuf = vim.current.buffer
 
-        if header:
-            curbuf[0] = msg
+        if not line:
+            curbuf[line] = msg
         else:
-            curbuf.append(msg)
+            for i, row in enumerate(answer):
+                try:
+                    curbuf[i+1] = row
+                except:
+                    curbuf.append(row)
 
     def redraw(self):
         with self.lock:
@@ -83,72 +112,17 @@ class Buffer():
 
         return string, is_running
 
-class HandlerThread(mpr.Process):
-    def __init__(self, lock, buf_q, send_q, tmp_db):
-        super().__init__()
-        self.lock = lock
-        self.buf_q = buf_q
-        self.send_q = send_q
-        self.tmp_db = tmp_db
-        self._running = True
+buf_lock = thr.Lock()
+buf_q, send_q, work_q = queue.Queue(), queue.Queue(), queue.Queue()
+buf = Buffer(buf_lock, buf_q, send_q)
+EOF
+endfunction
 
-    def run(self):
-        while self._running:
-            if not self.send_q.empty():
-                item = self.send_q.get()
-                # with self.lock:
-                    # request to database
 
-                self.buf_q.put(item)
 
-    def terminate(self):
-        self._running = False
-
-class CallerThread(mpr.Process):
-    def __init__(self, work_q, lock, tmp_db):
-        super().__init__()
-        self.work_q = work_q
-        self.lock = lock
-        self.tmp_db = tmp_db
-
-    def run(self):
-        proc = subprocess.Popen(["find * -type f"], shell=True, stdout=subprocess.PIPE)
-        filenames = proc.communicate()[0].decode().split("\n")
-        
-
-        th = thr.Thread(target=lambda proc: proc.wait(), args=(proc,))
-        th.start()
-        
-        for file in filenames:
-            self.work_q.put(file)
-
-        running_workers = []
-        nthreads = len(filenames) if len(filenames) < 17 else 16
-        for i in range(nthreads):
-            th = WorkerThread(self.lock, self.work_q, tmp_db)
-            th.start()
-
-class WorkerThread(thr.Thread):
-    def __init__(self, lock, work_q, tmp_db):
-        super().__init__()
-        self.lock = lock
-        self.work_q = work_q
-        self.tmp_db = tmp_db
-        self._running = True
-
-    def run(self):
-        while self._running:
-            try:
-                task = self.work_q.get()
-                
-                # parse file and push to with self.lock: database
-
-                self.work_q.task_done()
-            except queue.Empty:
-                self.terminate()
-    
-    def terminate(self):
-        self._running = False
+function! vimNG#main()
+let py_exe = 'python3'
+execute py_exe "<< EOF"
 
 class RefreshThread(thr.Thread):
     def __init__(self, lock):
@@ -163,62 +137,7 @@ class RefreshThread(thr.Thread):
 
     def terminate(self):
         self._running = False
-
-def main():
-    # Global variables
-
-    is_running = vim.eval("g:is_running")
-
-    string = ''
-    buf_q, send_q, work_q = queue.Queue(), queue.Queue(), queue.Queue()
-    buf_lock, db_lock = thr.Lock(), thr.Lock()
-    buf = Buffer(buf_lock, buf_q, send_q)
-
-    tmp_db = tempfile.NamedTemporaryFile(suffix=".db")
-
-
-    # Call workerThreads
-    caller = CallerThread(work_q, db_lock, tmp_db)
-    caller.start()
-
-
-    # Actual window
-    vim.command("new tmp")
-
-
-    """
-    refreshers = []
-    for i in range(4):
-        refr = RefreshThread(buf_lock)
-        refr.start()
-        refreshers.append(refr)
-    """
-
-    # Call to database and put to buf_q
-    handler = HandlerThread(db_lock, buf_q, send_q, tmp_db)
-    handler.start()
-
-
-    while is_running:
-        buf.redraw()
-        if not buf.buf_q.empty():
-            # Writes from buf_q
-            msg = buf.buf_q.get()
-            buf.write(msg)
-
-        string, is_running = buf.handle_input(string, is_running)
-
-        # Send on handling
-        buf.send_q.put(string)
-        buf.write(string, header=True)
-    handler.terminate()
-    tmp_db.close()
-    # call new mode in buffer to navigate written text
-    # to change to new file
-main()
 EOF
 endfunction
 
-let g:is_running = 1
-let s:str = ''
-nnoremap <C-k> :call vim_scan#start_python()<CR>
+nnoremap <C-k> :call vimNG#begin()<CR>

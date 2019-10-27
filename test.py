@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
+import sys
 import queue
+import sys
 import os
 import re
 import sqlite3
@@ -8,7 +10,6 @@ import sys
 import subprocess
 import tempfile
 import threading as thr
-import multiprocessing as mp
 
 class HandlerThread(thr.Thread):
     def __init__(self, buf_q, send_q):
@@ -24,16 +25,17 @@ class HandlerThread(thr.Thread):
 
 
             msg = self.get_from_db(name)
-            buf_q.put(msg)
+            print(msg, " <- Message from db")
+            self.buf_q.put(msg)
 
     def get_from_db(self, name):
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
 
+        answer = []
         for row in cursor.execute(f"""SELECT * FROM defs WHERE row LIKE '%{name}%'"""):
-            print(row)
-        #self.terminate()
-
+            answer.append(row)
+        return answer
 
     def terminate(self):
         self._running = False
@@ -49,30 +51,40 @@ class CallerThread(thr.Thread):
     def run(self):
         proc = subprocess.Popen(["find * -type f"], shell=True, stdout=subprocess.PIPE)
         filenames = proc.communicate()[0].decode().split("\n")
-        
+
         self.exclude_ignored_files(filenames)
+
         print("Before waiting", filenames, sep=": ")
-
         th = thr.Thread(target=lambda proc: proc.wait(), args=(proc,))
-        
-        for file in filenames:
-            if file == "" or file == DB_NAME:
-                continue
-            self.work_q.put(file)
 
-        running_workers = []
+        threads = []
         nthreads = len(filenames) if len(filenames) < 17 else 16
         for i in range(nthreads):
             th = WorkerThread(self.lock, self.work_q)
             th.start()
+            threads.append(th)
+
+        for file in filenames:
+            self.work_q.put(file)
+
+        self.work_q.join()
+
+        for i in range(nthreads):
+            self.work_q.put(None)
+
+        for i in threads:
+            i.join()
 
     def exclude_ignored_files(self, filenames):
         ignored = ".gitignore"
         if not os.path.isfile(ignored):
             return
 
+        filenames.remove('')
         with open(ignored) as f:
-            for pattern in f.read().split("\n"):
+            ff = f.read().split("\n")
+            ff.append(DB_NAME)
+            for pattern in ff:
                 if pattern == '':
                     continue
                 for file in filenames:
@@ -114,24 +126,25 @@ class WorkerThread(thr.Thread):
             _create_conn()
             self.connected = True
 
-
         self.cursor.executemany("""INSERT INTO defs VALUES (?, ?, ?)""", [values])
         with self.lock:
             self.conn.commit()
 
     def run(self):
         while self._running:
-            try:
-                task = self.work_q.get_nowait()
-                
-                self.parse_file(task)
-                self.work_q.task_done()
-            except queue.Empty:
-                print("Terminating")
+            task = self.work_q.get()
+            if task is None:
                 self.terminate()
+                continue
+
+            self.parse_file(task)
+            self.work_q.task_done()
     
     def terminate(self):
+        print("Terminating")
         self._running = False
+        if self.conn:
+            self.conn.close()
 
 def print_db():
     conn = sqlite3.connect(DB_NAME)
@@ -140,12 +153,14 @@ def print_db():
     for row in cursor.execute("""SELECT * FROM defs"""):
         print(row)
 
+    conn.close()
+
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    cursor.execute("""DELETE FROM defs""")
     cursor.execute("""CREATE TABLE IF NOT EXISTS defs (filename text, line int, row text)""")
+    cursor.execute("""DELETE FROM defs""")
 
     conn.commit()
     conn.close()
@@ -155,25 +170,23 @@ DB_NAME = "w.db"
 def main():
     db_lock = thr.Lock()
     work_q, buf_q, send_q = queue.Queue(), queue.Queue(), queue.Queue()
+    for i in ['py', 'th', 'cursor']:
+        send_q.put(i)
 
     h = HandlerThread(buf_q, send_q)
     h.daemon = True
     h.start()
+
 
     caller = CallerThread(work_q, db_lock)
     caller.start()
 
     caller.join()
 
-
 if __name__ == "__main__":
     init_db()
     prc = thr.Thread(target=main, args=())
     prc.start()
-
-    a = 1
-    for i in range(20):
-        a += a * a
 
     prc.join()
     print_db()
