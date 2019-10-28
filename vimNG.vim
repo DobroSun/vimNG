@@ -1,23 +1,46 @@
 function! vimNG#begin()    
     enew
+    echo "Search for definitions"
 
     let s:str = ''
     let g:is_input = 1
+    let g:choosing = 1
     while g:is_input
         redraw
         let s:char = getchar()
         let s:str = s:handle_input(s:str, s:char)
+
+        if !g:is_input
+            break
+        endif
 
         let s:answer = s:make_request_to_db(s:str)
 
         call s:write_to_buf(s:str, 0)
         call s:write_to_buf(s:answer, 1)
     endwhile
+    call s:join_all()
 
-    "new mode
-    call s:close_all()
-    set nomodifiable
-    set modifiable
+    set cursorline
+    
+    normal! 2G
+    let s:curline = '2'
+    while g:choosing
+        let s:char = getchar()
+
+        let s:curline = s:handle_cursor_pos(s:char, s:curline)
+
+        silent! execute '/\%' . s:curline . 'l\%>0c./'
+        redraw
+    endwhile
+    call s:close_db()
+
+    let s:string = getline(s:curline)
+    let [s:filename, s:line] = s:compute_file(s:string)
+
+    bdelete!
+    execute 'edit +' . s:line . " " . s:filename
+    set nocursorline
 endfunction
 
 function! s:handle_input(str, char)
@@ -46,19 +69,54 @@ request = vim.eval("a:str")
 send_q.put(request)
 
 answer = buf_q.get()
-str_ans = ["{0}: line: {1}; {2}".format(*i) for i in answer]
+str_ans = ["{0}: {1}: {2}".format(*i) for i in answer]
 vim.command("let s:answer = py3eval('str_ans')")
 EOF
 return s:answer
 endfunction
 
-function! s:close_all()
+function! s:handle_cursor_pos(char, line)
+    let s:line = str2nr(a:line)
+    if nr2char(a:char) == 'j'
+        let s:line += 1 
+    elseif nr2char(a:char) == 'k'
+        let s:line -= 1 
+    elseif nr2char(a:char) == "\<CR>"
+        let g:choosing = 0
+    endif
+    return string(s:line)
+endfunction
+
+function! s:join_all()
+let py_exe = 'python3'
+execute py_exe "<< EOF"
+prc.join()
+
+h.terminate()
+for t in refreshers:
+    t.terminate()
+EOF
+endfunction
+
+function! s:close_db()
 let py_exe = 'python3'
 execute py_exe "<< EOF"
 tmp_db.close()
-for t in refreshers:
-    t.join()
 EOF
+endfunction
+
+function! s:compute_file(curline)
+let py_exe = 'python3'
+execute py_exe "<< EOF"
+str = vim.eval("a:curline")
+attr = re.findall(r'(\w*\.\w*): (\d+): (.*)', str)
+
+name = attr[0][0]
+line = attr[0][1]
+vim.command("let s:filename = py3eval('name')")
+vim.command("let s:line = py3eval('line')")
+EOF
+return [s:filename, s:line]
 endfunction
 
 function! vimNG#init_globals()
@@ -106,32 +164,6 @@ class Buffer():
         with self.lock:
             vim.command("redraw")
 
-buf_lock, db_lock = thr.Lock(), thr.Lock()
-buf_q, send_q, work_q = queue.Queue(), queue.Queue(), queue.Queue()
-tmp_db = tempfile.NamedTemporaryFile(suffix=".db")
-refreshers = []
-buf = Buffer(buf_lock, buf_q, send_q)
-EOF
-endfunction
-
-function! vimNG#parse()
-let py_exe = 'python3'
-execute py_exe "<< EOF"
-class RefreshThread(thr.Thread):
-    def __init__(self, lock):
-        super().__init__()
-        self.lock = lock
-        self._running = True
-
-    def run(self):
-        while self._running:
-            with self.lock:
-                vim.command("noautocmd normal! a")
-            time.sleep(0.33)    
-
-    def terminate(self):
-        self._running = False
-
 class HandlerThread(thr.Thread):
     def __init__(self, buf_q, send_q, lock, tmp_db):
         super().__init__()
@@ -159,6 +191,35 @@ class HandlerThread(thr.Thread):
         for row in response:
             answer.append(row)
         return answer
+
+    def terminate(self):
+        self._running = False
+
+
+buf_lock, db_lock = thr.Lock(), thr.Lock()
+buf_q, send_q, work_q = queue.Queue(), queue.Queue(), queue.Queue()
+tmp_db = tempfile.NamedTemporaryFile(suffix=".db")
+refreshers = []
+buf = Buffer(buf_lock, buf_q, send_q)
+h = HandlerThread(buf_q, send_q, db_lock, tmp_db)
+
+EOF
+endfunction
+
+function! vimNG#parse()
+let py_exe = 'python3'
+execute py_exe "<< EOF"
+class RefreshThread(thr.Thread):
+    def __init__(self, lock):
+        super().__init__()
+        self.lock = lock
+        self._running = True
+
+    def run(self):
+        while self._running:
+            with self.lock:
+                vim.command("redraw")
+            time.sleep(0.33)
 
     def terminate(self):
         self._running = False
@@ -269,7 +330,7 @@ class WorkerThread(thr.Thread):
         if self.conn:
             self.conn.close()
 
-def main():
+def main(h):
     def init_db():
         conn = sqlite3.connect(tmp_db.name)
         cursor = conn.cursor()
@@ -285,7 +346,7 @@ def main():
         refr.start()
         refreshers.append(refr)
 
-    h = HandlerThread(buf_q, send_q, db_lock, tmp_db)
+    #h = HandlerThread(buf_q, send_q, db_lock, tmp_db)
     h.daemon = True
     h.start()
 
@@ -294,7 +355,7 @@ def main():
     caller.join()
 
 
-prc = thr.Thread(target=main, args=())
+prc = thr.Thread(target=main, args=(h,))
 prc.start()
 EOF
 endfunction
