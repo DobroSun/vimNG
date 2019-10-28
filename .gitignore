@@ -1,4 +1,6 @@
 .*.sw[a-z]
+
 .sw[a-z]
+.sv[a-z]
 
 __pycache__

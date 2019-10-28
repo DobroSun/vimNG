@@ -362,5 +362,3 @@ endfunction
 
 call vimNG#init_globals()
 call vimNG#parse()
-    
-nnoremap <C-k> :call vimNG#begin()<CR>
