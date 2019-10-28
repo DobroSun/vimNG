@@ -312,8 +312,7 @@ class WorkerThread(thr.Thread):
             self.connected = True
 
         self.cursor.executemany("""INSERT INTO defs VALUES (?, ?, ?)""", [values])
-        with self.lock:
-            self.conn.commit()
+        self.conn.commit()
 
     def run(self):
         while self._running:
