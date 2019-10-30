@@ -2,5 +2,6 @@
 
 .sw[a-z]
 .sv[a-z]
+.su[a-z]
 
 __pycache__

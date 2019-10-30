@@ -33,7 +33,7 @@ function! vimNG#begin()
         silent! execute '/\%' . s:curline . 'l\%>0c./'
         redraw
     endwhile
-    call s:close_db()
+    "call s:close_db()
 
     let s:string = getline(s:curline)
     let [s:filename, s:line] = s:compute_file(s:string)
@@ -41,6 +41,7 @@ function! vimNG#begin()
     bdelete!
     execute 'edit +' . s:line . " " . s:filename
     set nocursorline
+    call s:re_init()
 endfunction
 
 function! s:handle_input(str, char)
@@ -119,6 +120,11 @@ EOF
 return [s:filename, s:line]
 endfunction
 
+function! s:re_init()
+    call vimNG#init_globals()
+    call vimNG#parse()
+endfunction
+
 function! vimNG#init_globals()
 let py_exe = 'python3'
 execute py_exe "<< EOF"
@@ -153,7 +159,6 @@ class Buffer():
         else:
             for i in range(1, len(curbuf)):
                 curbuf[i] = ''
-
             for i, row in enumerate(msg):
                 try:
                     curbuf[i+1] = row
@@ -171,7 +176,10 @@ class HandlerThread(thr.Thread):
         self.send_q = send_q
         self.lock = lock
         self.tmp_db = tmp_db
+        self.connected = False
         self._running = True
+        self.conn = None
+        self.cursor = None
 
     def run(self):
         while self._running:
@@ -182,12 +190,16 @@ class HandlerThread(thr.Thread):
             self.buf_q.put(msg)
 
     def get_from_db(self, name):
-        conn = sqlite3.connect(self.tmp_db.name)
-        cursor = conn.cursor()
+        def _create_conn():
+            self.conn = sqlite3.connect(self.tmp_db.name)
+            self.cursor = self.conn.cursor()
 
+        if not self.connected:
+            _create_conn()
+            self.connected = True
         answer = []
         with self.lock:
-            response = cursor.execute(f"""SELECT * FROM defs WHERE row LIKE '%{name}%'""")
+            response = self.cursor.execute(f"""SELECT * FROM defs WHERE row LIKE '%{name}%'""")
         for row in response:
             answer.append(row)
         return answer
@@ -312,7 +324,8 @@ class WorkerThread(thr.Thread):
             self.connected = True
 
         self.cursor.executemany("""INSERT INTO defs VALUES (?, ?, ?)""", [values])
-        self.conn.commit()
+        with self.lock:
+            self.conn.commit()
 
     def run(self):
         while self._running:
@@ -359,5 +372,15 @@ prc.start()
 EOF
 endfunction
 
+augroup closing_tmp_db
+    autocmd!
+    autocmd VimLeave * :call s:close_db()
+
+    " If all workers aren't terminated it's impossible to quit vim
+    autocmd VimLeave * :call s:join_all()
+augroup END
+
 call vimNG#init_globals()
 call vimNG#parse()
+
+"nnoremap <C-k> :call vimNG#begin()<CR>
