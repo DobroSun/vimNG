@@ -291,6 +291,7 @@ class CallerThread(thr.Thread):
                             pass
 
 class WorkerThread(thr.Thread):
+    can_parse = {".py", ".cpp"}
     PY_RE = [r"\w* = .*", r"def \w*(.*):", r"class \w*(.*):"]
 
     def __init__(self, lock, work_q, tmp_db):
@@ -304,17 +305,25 @@ class WorkerThread(thr.Thread):
         self.cursor = None
 
     def parse_file(self, filename):
+        file_ext = re.findall(r"\.\w*$", filename)
+        if file_ext not in self.can_parse:
+            return 
+
+        parsed_lines = []
         with open(filename, "r") as f:
             for i, line in enumerate(f.read().split("\n")):
                 for pattern in self.PY_RE:
-                    compiled_p = re.compile(pattern)
-                    res = re.search(compiled_p, line)
+                    res = re.search(pattern, line)
                     if not res or res.start() not in [0, 4]:
                         continue
-
-                    self.push_to_db((filename, i+1, res.group(0)))
+                    parsed_lines.append((filename, i+1, res.group(0)))
+                    print(parsed_lines)
+        return parsed_lines
 
     def push_to_db(self, values):
+        if not value:
+            return
+
         def _create_conn():
             self.conn = sqlite3.connect(self.tmp_db.name)
             self.cursor = self.conn.cursor()
@@ -323,8 +332,8 @@ class WorkerThread(thr.Thread):
             _create_conn()
             self.connected = True
 
-        self.cursor.executemany("""INSERT INTO defs VALUES (?, ?, ?)""", [values])
         with self.lock:
+            self.cursor.executemany("""INSERT INTO defs VALUES (?, ?, ?)""", values)
             self.conn.commit()
 
     def run(self):
@@ -334,7 +343,9 @@ class WorkerThread(thr.Thread):
                 self.terminate()
                 continue
 
-            self.parse_file(task)
+            parsed_lines = self.parse_file(task)
+            print(parsed_lines)
+            self.push_to_db(parsed_lines)
             self.work_q.task_done()
     
     def terminate(self):
@@ -383,4 +394,4 @@ augroup END
 call vimNG#init_globals()
 call vimNG#parse()
 
-"nnoremap <C-k> :call vimNG#begin()<CR>
+nnoremap <C-k> :call vimNG#begin()<CR>
