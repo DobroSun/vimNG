@@ -14,8 +14,6 @@ nnoremap <C-k> :call vimNG#begin()<CR>
 ```
 
 # Notes
-* When script parses current and sub-directories it takes all files(including binary).
-To avoid that it will parse your .gitignore file and exclude matched files
 * Script only works for root user(Why?)
 
 # TODO

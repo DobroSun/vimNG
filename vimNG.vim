@@ -306,7 +306,7 @@ class WorkerThread(thr.Thread):
 
     def parse_file(self, filename):
         file_ext = re.findall(r"\.\w*$", filename)
-        if file_ext not in self.can_parse:
+        if len(file_ext) != 1 or file_ext[0] not in self.can_parse:
             return 
 
         parsed_lines = []
@@ -317,11 +317,10 @@ class WorkerThread(thr.Thread):
                     if not res or res.start() not in [0, 4]:
                         continue
                     parsed_lines.append((filename, i+1, res.group(0)))
-                    print(parsed_lines)
         return parsed_lines
 
     def push_to_db(self, values):
-        if not value:
+        if not values:
             return
 
         def _create_conn():
@@ -344,8 +343,8 @@ class WorkerThread(thr.Thread):
                 continue
 
             parsed_lines = self.parse_file(task)
-            print(parsed_lines)
             self.push_to_db(parsed_lines)
+
             self.work_q.task_done()
     
     def terminate(self):
