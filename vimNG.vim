@@ -110,7 +110,7 @@ function! s:compute_file(curline)
 let py_exe = 'python3'
 execute py_exe "<< EOF"
 str = vim.eval("a:curline")
-attr = re.findall(r'(\w*\.\w*): (\d+): (.*)', str)
+attr = re.findall(r'(.*/\w*\.\w*): (\d+): (.*)', str)
 
 name = attr[0][0]
 line = attr[0][1]
