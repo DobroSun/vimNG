@@ -33,7 +33,6 @@ function! vimNG#begin()
         silent! execute '/\%' . s:curline . 'l\%>0c./'
         redraw
     endwhile
-    "call s:close_db()
 
     let s:string = getline(s:curline)
     let [s:filename, s:line] = s:compute_file(s:string)
@@ -92,11 +91,6 @@ function! s:join_all()
 let py_exe = 'python3'
 execute py_exe "<< EOF"
 prc.join()
-
-h.terminate()
-for t in refreshers:
-    t.terminate()
-EOF
 endfunction
 
 function! s:close_db()
@@ -123,11 +117,10 @@ return [s:filename, s:line]
 endfunction
 
 function! s:re_init()
-    call vimNG#init_globals()
     call vimNG#parse()
 endfunction
 
-function! vimNG#init_globals()
+function! vimNG#parse()
 let py_exe = 'python3'
 execute py_exe "<< EOF"
 import datetime
@@ -209,20 +202,6 @@ class HandlerThread(thr.Thread):
     def terminate(self):
         self._running = False
 
-
-buf_lock, db_lock = thr.Lock(), thr.Lock()
-buf_q, send_q, work_q = queue.Queue(), queue.Queue(), queue.Queue()
-tmp_db = tempfile.NamedTemporaryFile(suffix=".db")
-refreshers = []
-buf = Buffer(buf_lock, buf_q, send_q)
-h = HandlerThread(buf_q, send_q, db_lock, tmp_db)
-
-EOF
-endfunction
-
-function! vimNG#parse()
-let py_exe = 'python3'
-execute py_exe "<< EOF"
 class RefreshThread(thr.Thread):
     def __init__(self, lock):
         super().__init__()
@@ -245,7 +224,6 @@ class CallerThread(thr.Thread):
         self.lock = lock
         self.tmp_db = tmp_db
         self.threads = []
-
 
     def run(self):
         proc = subprocess.Popen(["find * -type f"], shell=True, stdout=subprocess.PIPE)
@@ -272,6 +250,13 @@ class CallerThread(thr.Thread):
 
         for t in threads:
             t.join()
+    
+    def join(self):
+        for th in self.threads:
+            th.terminate()
+            th.join()
+
+        super().join()
 
     def exclude_ignored_files(self, filenames):
         ignored = ".gitignore"
@@ -354,32 +339,49 @@ class WorkerThread(thr.Thread):
         if self.conn:
             self.conn.close()
 
-def main(h):
-    def init_db():
-        conn = sqlite3.connect(tmp_db.name)
-        cursor = conn.cursor()
+class Manage_Parsers(thr.Thread):
+    def __init__(self, buf_q, send_q, work_q, db_lock, buf_lock, tmp_db):
+        super().__init__()
+        self.handler = HandlerThread(buf_q, send_q, db_lock, tmp_db)
+        self.handler.daemon = True
+        self.caller = CallerThread(work_q, db_lock, tmp_db)
+        self.refreshers = []
 
-        cursor.execute("""CREATE TABLE IF NOT EXISTS defs (filename text, line int, row text)""")
+    def run(self):
+        def init_db():
+            conn = sqlite3.connect(tmp_db.name)
+            cursor = conn.cursor()
 
-        conn.commit()
-        conn.close()
-    init_db()
+            cursor.execute("""CREATE TABLE IF NOT EXISTS defs (filename text, line int, row text)""")
 
-    for i in range(4):
-        refr = RefreshThread(buf_lock)
-        refr.start()
-        refreshers.append(refr)
+            conn.commit()
+            conn.close()
+        init_db()
 
-    #h = HandlerThread(buf_q, send_q, db_lock, tmp_db)
-    h.daemon = True
-    h.start()
+        for i in range(4):
+            refr = RefreshThread(buf_lock)
+            refr.start()
+            self.refreshers.append(refr)
 
-    caller = CallerThread(work_q, db_lock, tmp_db)
-    caller.start()
-    caller.join()
+        self.handler.start()
+        self.caller.start()
 
+    def join(self):
+        self.caller.join()
+        self.handler.terminate()
 
-prc = thr.Thread(target=main, args=(h,))
+        for refr in self.refreshers:
+            refr.terminate()
+        super().join()
+
+# Global variables
+buf_lock, db_lock = thr.Lock(), thr.Lock()
+buf_q, send_q, work_q = queue.Queue(), queue.Queue(), queue.Queue()
+tmp_db = tempfile.NamedTemporaryFile(suffix=".db")
+buf = Buffer(buf_lock, buf_q, send_q)
+
+# Start parsing
+prc = Manage_Parsers(buf_q, send_q, work_q, db_lock, buf_lock, tmp_db)
 prc.start()
 EOF
 endfunction
@@ -387,12 +389,9 @@ endfunction
 augroup closing_tmp_db
     autocmd!
     autocmd VimLeave * :call s:close_db()
-
-    " If all workers aren't terminated it's impossible to quit vim
     autocmd VimLeave * :call s:join_all()
 augroup END
 
-call vimNG#init_globals()
 call vimNG#parse()
 
 nnoremap <C-k> :call vimNG#begin()<CR>
