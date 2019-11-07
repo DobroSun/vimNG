@@ -77,6 +77,11 @@ endfunction
 
 function! s:handle_cursor_pos(char, line)
     let s:line = str2nr(a:line)
+
+    if s:line == 1 
+        return string(s:line)
+    endif
+
     if nr2char(a:char) == 'j'
         let s:line += 1 
     elseif nr2char(a:char) == 'k'
@@ -143,8 +148,6 @@ import vim
 class Buffer():
     def __init__(self, lock, buf_q, send_q):
         self.lock = lock
-        self.buf_q = buf_q
-        self.send_q = send_q
 
     def write(self, msg, line):
         curbuf = vim.current.buffer
@@ -160,9 +163,6 @@ class Buffer():
                 except:
                     curbuf.append(row)
 
-    def redraw(self):
-        with self.lock:
-            vim.command("redraw")
 
 class HandlerThread(thr.Thread):
     def __init__(self, buf_q, send_q, lock, tmp_db):
@@ -202,21 +202,6 @@ class HandlerThread(thr.Thread):
     def terminate(self):
         self._running = False
 
-class RefreshThread(thr.Thread):
-    def __init__(self, lock):
-        super().__init__()
-        self.lock = lock
-        self._running = True
-
-    def run(self):
-        while self._running:
-            with self.lock:
-                vim.command("redraw")
-            time.sleep(0.33)
-
-    def terminate(self):
-        self._running = False
-
 class CallerThread(thr.Thread):
     def __init__(self, work_q, lock, tmp_db):
         super().__init__()
@@ -232,13 +217,14 @@ class CallerThread(thr.Thread):
         self.exclude_ignored_files(filenames)
 
         th = thr.Thread(target=lambda proc: proc.wait(), args=(proc,))
+        th.start()
+        th.join()
 
-        threads = []
         nthreads = len(filenames) if len(filenames) < 17 else 16
         for i in range(nthreads):
             th = WorkerThread(self.lock, self.work_q, self.tmp_db)
             th.start()
-            threads.append(th)
+            self.threads.append(th)
 
         for file in filenames:
             self.work_q.put(file)
@@ -247,16 +233,9 @@ class CallerThread(thr.Thread):
 
         for i in range(nthreads):
             self.work_q.put(None)
-
-        for t in threads:
-            t.join()
     
-    def join(self):
-        for th in self.threads:
-            th.terminate()
-            th.join()
-
-        super().join()
+        for t in self.threads:
+            t.join()
 
     def exclude_ignored_files(self, filenames):
         ignored = ".gitignore"
@@ -276,6 +255,13 @@ class CallerThread(thr.Thread):
                             filenames.remove(file)
                         except:
                             pass
+
+    def join(self):
+        for t in self.threads:
+            if t.is_alive():
+                t.terminate()
+        super().join()
+
 
 class WorkerThread(thr.Thread):
     can_parse = {".py", ".cpp"}
@@ -342,10 +328,12 @@ class WorkerThread(thr.Thread):
 class Manage_Parsers(thr.Thread):
     def __init__(self, buf_q, send_q, work_q, db_lock, buf_lock, tmp_db):
         super().__init__()
+        self.lock = buf_lock
+        self.refreshers = []
+
         self.handler = HandlerThread(buf_q, send_q, db_lock, tmp_db)
         self.handler.daemon = True
         self.caller = CallerThread(work_q, db_lock, tmp_db)
-        self.refreshers = []
 
     def run(self):
         def init_db():
@@ -358,11 +346,6 @@ class Manage_Parsers(thr.Thread):
             conn.close()
         init_db()
 
-        for i in range(4):
-            refr = RefreshThread(buf_lock)
-            refr.start()
-            self.refreshers.append(refr)
-
         self.handler.start()
         self.caller.start()
 
@@ -370,8 +353,6 @@ class Manage_Parsers(thr.Thread):
         self.caller.join()
         self.handler.terminate()
 
-        for refr in self.refreshers:
-            refr.terminate()
         super().join()
 
 # Global variables
@@ -388,10 +369,8 @@ endfunction
 
 augroup closing_tmp_db
     autocmd!
-    autocmd VimLeave * :call s:close_db()
     autocmd VimLeave * :call s:join_all()
+    autocmd VimLeave * :call s:close_db()
 augroup END
 
 call vimNG#parse()
-
-nnoremap <C-k> :call vimNG#begin()<CR>
