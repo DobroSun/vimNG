@@ -264,8 +264,11 @@ class CallerThread(thr.Thread):
 
 
 class WorkerThread(thr.Thread):
-    can_parse = {".py", ".cpp"}
-    PY_RE = [r"\w* = .*", r"def \w*(.*):", r"class \w*(.*):"]
+    can_parse = {
+                ".py": [r"\w*\s*?=\s*?.*", r"def \w*\s*?\(.*\)\s*?:", r"class \w*\s*?\(.*\)\s*?:"],
+                ".cpp": [r"\w*\s*?\w*\s*?=\s*?.*;", r"\b^(?!while|for|if)\w*\s*?\w*\s*?\(?.*\)?\s*?{"],
+                ".hpp": [r"\w*\s*?\w*\s*?=\s*?.*;", r"\b^(?!while|for|if)\w*\s*?\w*\s*?\(?.*\)?\s*?{"]
+                }
 
     def __init__(self, lock, work_q, tmp_db):
         super().__init__()
@@ -285,7 +288,7 @@ class WorkerThread(thr.Thread):
         parsed_lines = []
         with open(filename, "r") as f:
             for i, line in enumerate(f.read().split("\n")):
-                for pattern in self.PY_RE:
+                for pattern in self.can_parse[file_ext[0]]:
                     res = re.search(pattern, line)
                     if not res or res.start() not in [0, 4]:
                         continue
